@@ -1,18 +1,16 @@
 # Discord Game Score Bot
 
-A Go Discord bot for recording match results and showing scoreboards for 1v1 and 2v2 games.
+A Go Discord bot for recording 1v1 match results and showing scoreboards.
 
-The bot uses Discord slash commands, stores results in a local `scores.json` file, and keeps scores by player matchup or team matchup.
+The bot uses Discord slash commands, stores results in a local `scores.json` file, and keeps scores by player matchup.
 
 ## Features
 
 - Record 1v1 match results.
-- Create named 2-player teams.
-- Record 2v2 match results between saved teams.
-- Import multiple results at once.
+- Undo a recorded win.
 - Show head-to-head scoreboards.
 - Show all recorded scoreboards.
-- Persist data locally in JSON.
+- Persist data locally in JSON, written atomically so a crash cannot corrupt the file.
 
 ## Requirements
 
@@ -60,74 +58,56 @@ The bot logs in, registers its slash commands, and keeps running until you stop 
 
 ## Slash Commands
 
-The command definitions in `main.go` currently register these Portuguese command names:
+The command definitions in `commands.go` register these Portuguese command names:
 
 | Command | Options | Description |
 | --- | --- | --- |
-| `/salva_jogo` | `jogador1`, `jogador2`, `vencedor` | Saves a 1v1 result. |
-| `/salva_jogo_2v2` | `time1`, `time2`, `vencedor` | Saves a 2v2 result between saved teams. |
-| `/criar_time` | `nome`, `jogador1`, `jogador2` | Creates or updates a named team. |
-| `/times` | None | Lists saved teams. |
-| `/grava_em_massa` | `results` | Imports multiple results from text. |
-| `/placar` | `jogador1`, `jogador2` | Shows a 1v1 scoreboard. |
-| `/placar2v2` | `time1`, `time2` | Shows a 2v2 scoreboard. |
+| `/salva_jogo` | `vencedor`, `perdedor` | Records one win for `vencedor` against `perdedor`. |
+| `/desfazer_jogo` | `vencedor`, `perdedor` | Removes one win from `vencedor` in that matchup. It does nothing if they have no wins there. |
+| `/placar` | `jogador1`, `jogador2` | Shows the scoreboard between two players. |
 | `/todos_placares` | None | Shows all saved scoreboards that fit in one Discord message. |
 
-The dispatcher accepts the Portuguese command names above. It also still accepts the previous English command names for compatibility while old global Discord commands expire from cache.
+`/desfazer_jogo` removes a win from the player you name. It does not track which game happened last, so name the winner of the game you are undoing.
 
-## Bulk Import Format
+`/todos_placares` looks up every player's display name through the Discord API, which can be slow. The bot acknowledges the command immediately (Discord shows "thinking...") and fills in the answer when it is ready, so it does not hit Discord's 3-second response limit.
 
-The `/grava_em_massa` command accepts one result per line. Semicolons are also treated as line breaks.
-
-1v1 examples:
-
-```text
-<@player1> vs <@player2> winner <@player1>
-3x <@player1> vs <@player2> winner <@player2>
-```
-
-2v2 examples:
-
-```text
-2v2 <@team1a> + <@team1b> vs <@team2a> + <@team2b> winner team1
-2x 2v2 <@team1a> + <@team1b> vs <@team2a> + <@team2b> winner team2
-```
-
-Rules:
-
-- Use Discord user mentions, such as `<@123456789>`.
-- Add a count prefix like `3x` to record the same result multiple times.
-- For 1v1, the winner must be one of the two players.
-- For 2v2, use `winner team1` or `winner team2`.
-- A 2v2 game cannot include the same player more than once.
+On every startup the bot overwrites the full command list in Discord, so any command removed from `commands.go` is also removed from Discord.
 
 ## Data Storage
 
-Scores are stored in `scores.json` in the working directory.
+Scores are stored in `scores.json` in the working directory. The file is listed in `.gitignore`, so it is not committed.
 
 The top-level structure is:
 
 ```json
 {
-  "matchups": {},
-  "registered_teams": {}
+  "matchups": {
+    "111111111111111111|222222222222222222": {
+      "players": {
+        "111111111111111111": 3,
+        "222222222222222222": 2
+      }
+    }
+  }
 }
 ```
 
-Matchup keys are deterministic:
+Matchup keys are the two player IDs, sorted and joined by `|`, so `A|B` and `B|A` share one scoreboard.
 
-- 1v1 keys use sorted player IDs joined by `|`.
-- 2v2 team keys use sorted player IDs joined by `+`.
-- 2v2 matchup keys use sorted team keys joined by `|`.
-
-The bot reads and writes the full file for each change. Keep a backup of `scores.json` before editing it manually.
+The bot reads and writes the full file for each change. Writes go to `scores.json.tmp`, are flushed to disk, and are then renamed over `scores.json`, so the file is always either the old version or the new one. Keep a backup of `scores.json` before editing it manually.
 
 ## Development
 
 Format the code:
 
 ```sh
-gofmt -w main.go
+gofmt -w .
+```
+
+Check for common mistakes:
+
+```sh
+go vet ./...
 ```
 
 Build the project:
@@ -136,26 +116,41 @@ Build the project:
 go build .
 ```
 
-Run compile checks:
+Run the tests:
 
 ```sh
 go test ./...
 ```
 
+Run them with Go's data race detector, which is useful for the locking in `Store`:
+
+```sh
+go test -race ./...
+```
+
+The tests in `store_test.go` cover `Store` and `matchupKey`. Each test uses a temporary directory, so they never touch your real `scores.json`. The Discord command handlers are not covered by tests.
+
 ## Project Structure
 
 ```text
 .
+├── commands.go     slash command definitions
+├── main.go         startup, interaction handler, command handlers
+├── players.go      player options, name lookup, scoreboard formatting
+├── store.go        Store: loading, saving and updating scores.json
+├── store_test.go   tests for Store and matchupKey
 ├── go.mod
 ├── go.sum
-├── main.go
-├── scores.json
+├── .gitignore
 └── README.md
 ```
 
+`scores.json` is created at runtime and is not part of the repository.
+
 ## Operational Notes
 
-- `scores.json` is local to the process. Running multiple bot instances against the same file can lose updates.
+- `scores.json` is local to the process. The lock in `Store` only protects a single bot process, so running multiple instances against the same file can lose updates.
+- Because `scores.json` is not in git, back it up separately if the scores matter to you.
 - `scores.json` is not encrypted. Do not store secrets in it.
 - `DISCORD_TOKEN` should be provided through environment variables or secret management, not committed to the repository.
-- Commands are registered on every startup.
+- Commands are synced with Discord on every startup.
