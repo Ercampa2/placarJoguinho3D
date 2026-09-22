@@ -10,6 +10,7 @@ const scoreboardTooLongMessage = "More games exist, but the scoreboard is too lo
 type playerOption struct {
 	ID          string
 	DisplayName string
+	AvatarURL   string
 }
 
 func playerFromID(s *discordgo.Session, guildID, userID string) playerOption {
@@ -28,6 +29,9 @@ func playerFromID(s *discordgo.Session, guildID, userID string) playerOption {
 		case member.User != nil && member.User.Username != "":
 			player.DisplayName = member.User.Username
 		}
+		if member.User != nil {
+			player.AvatarURL = member.User.AvatarURL("")
+		}
 		return player
 	}
 
@@ -42,6 +46,7 @@ func playerFromID(s *discordgo.Session, guildID, userID string) playerOption {
 	case user.Username != "":
 		player.DisplayName = user.Username
 	}
+	player.AvatarURL = user.AvatarURL("")
 
 	return player
 }
@@ -57,9 +62,23 @@ func userOptions(data discordgo.ApplicationCommandInteractionData) map[string]pl
 		values[option.Name] = playerOption{
 			ID:          userID,
 			DisplayName: userDisplayName(userID, data.Resolved),
+			AvatarURL:   userAvatarURL(userID, data.Resolved),
 		}
 	}
 	return values
+}
+
+// userAvatarURL reads the avatar straight from the interaction's resolved
+// data, which Discord already sends along with the command — no extra API
+// call needed, unlike playerFromID.
+func userAvatarURL(userID string, resolved *discordgo.ApplicationCommandInteractionDataResolved) string {
+	if resolved == nil {
+		return ""
+	}
+	if user := resolved.Users[userID]; user != nil {
+		return user.AvatarURL("")
+	}
+	return ""
 }
 
 func gameOptions(data discordgo.ApplicationCommandInteractionData) (playerOption, playerOption) {

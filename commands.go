@@ -70,9 +70,24 @@ var commands = []*discordgo.ApplicationCommand{
 	},
 }
 
-func handleCommand(s *discordgo.Session, i *discordgo.InteractionCreate, store *Store) (string, error) {
+// reply is what a command handler produces. main.go turns it into the
+// actual Discord response: content, an embed, or both.
+type reply struct {
+	content string
+	embed   *discordgo.MessageEmbed
+}
+
+func textReply(content string) reply {
+	return reply{content: content}
+}
+
+func embedReply(embed *discordgo.MessageEmbed) reply {
+	return reply{embed: embed}
+}
+
+func handleCommand(s *discordgo.Session, i *discordgo.InteractionCreate, store *Store) (reply, error) {
 	if i.GuildID == "" {
-		return "Please use this command in a Discord server.", nil
+		return textReply("Please use this command in a Discord server."), nil
 	}
 
 	data := i.ApplicationCommandData()
@@ -88,46 +103,47 @@ func handleCommand(s *discordgo.Session, i *discordgo.InteractionCreate, store *
 	case "desfazer_jogo":
 		return undoGame(store, data)
 	default:
-		return fmt.Sprintf("Unknown command: /%s.", commandName), nil
+		return textReply(fmt.Sprintf("Unknown command: /%s.", commandName)), nil
 	}
 }
 
-func recordGame(store *Store, data discordgo.ApplicationCommandInteractionData) (string, error) {
+func recordGame(store *Store, data discordgo.ApplicationCommandInteractionData) (reply, error) {
 	winner, loser := winnerLoserOptions(data)
 
 	if winner.ID == "" || loser.ID == "" {
-		return "Envie um vencedor e um perdedor", nil
+		return textReply("Envie um vencedor e um perdedor"), nil
 	}
 
 	if winner.ID == loser.ID {
-		return "Os jogadores devem ser pessoas diferentes", nil
+		return textReply("Os jogadores devem ser pessoas diferentes"), nil
 	}
 
 	matchup, err := store.RecordWin(winner.ID, loser.ID)
 	if err != nil {
-		return "", err
+		return reply{}, err
 	}
 
-	return formatScoreboard(winner, loser, matchup, fmt.Sprintf("Vitória gravada para %s.", winner.DisplayName)), nil
+	description := fmt.Sprintf("Vitória gravada para %s.", winner.DisplayName)
+	return embedReply(formatScoreboardEmbed(winner, loser, matchup, description, colorRecorded)), nil
 }
 
-func undoGame(store *Store, data discordgo.ApplicationCommandInteractionData) (string, error) {
+func undoGame(store *Store, data discordgo.ApplicationCommandInteractionData) (reply, error) {
 	player1, player2 := gameOptions(data)
 
 	if player1.ID == "" || player2.ID == "" {
-		return "Envie 2 jogadores", nil
+		return textReply("Envie 2 jogadores"), nil
 	}
 
 	if player1.ID == player2.ID {
-		return "Os jogadores devem ser pessoas diferentes", nil
+		return textReply("Os jogadores devem ser pessoas diferentes"), nil
 	}
 
 	removed, matchup, err := store.UndoLast(player1.ID, player2.ID)
 	if err != nil {
-		if errors.Is(err, errNoWins) {
-			return fmt.Sprintf("Nenhuma partida gravada entre %v e %v", player1.DisplayName, player2.DisplayName), nil
+		if errors.Is(err, errNoMatchupPlayers) {
+			return textReply(fmt.Sprintf("Nenhuma partida gravada entre %v e %v", player1.DisplayName, player2.DisplayName)), nil
 		}
-		return "", err
+		return reply{}, err
 	}
 
 	winnerName, loserName := player1.DisplayName, player2.DisplayName
@@ -135,35 +151,36 @@ func undoGame(store *Store, data discordgo.ApplicationCommandInteractionData) (s
 		winnerName, loserName = loserName, winnerName
 	}
 
-	return formatScoreboard(player1, player2, matchup, fmt.Sprintf("Removida vitória de %v sobre %v.", winnerName, loserName)), nil
+	description := fmt.Sprintf("Removida vitória de %v sobre %v.", winnerName, loserName)
+	return embedReply(formatScoreboardEmbed(player1, player2, matchup, description, colorUndone)), nil
 }
 
-func showScoreboard(store *Store, data discordgo.ApplicationCommandInteractionData) (string, error) {
+func showScoreboard(store *Store, data discordgo.ApplicationCommandInteractionData) (reply, error) {
 	player1, player2 := gameOptions(data)
 
 	if player1.ID == "" || player2.ID == "" {
-		return "Envie 2 jogadores", nil
+		return textReply("Envie 2 jogadores"), nil
 	}
 
 	matchup, err := store.Matchup(player1.ID, player2.ID)
 	if err != nil {
 		if errors.Is(err, errNoMatchupPlayers) {
-			return fmt.Sprintf("Nenhum jogo gravado para %s vs %s.", player1.DisplayName, player2.DisplayName), nil
+			return textReply(fmt.Sprintf("Nenhum jogo gravado para %s vs %s.", player1.DisplayName, player2.DisplayName)), nil
 		}
 
-		return "", err
+		return reply{}, err
 	}
 
-	return formatScoreboard(player1, player2, matchup, ""), nil
+	return embedReply(formatScoreboardEmbed(player1, player2, matchup, "", colorNeutral)), nil
 }
 
-func showScoreboardAll(store *Store, s *discordgo.Session, guildID string) (string, error) {
+func showScoreboardAll(store *Store, s *discordgo.Session, guildID string) (reply, error) {
 	current, err := store.AllMatchups()
 	if err != nil {
 		if errors.Is(err, errNoMatchup) {
-			return "Nenhuma partida registrada ainda", nil
+			return textReply("Nenhuma partida registrada ainda"), nil
 		}
-		return "", err
+		return reply{}, err
 	}
 
 	keys := make([]string, 0, len(current))
@@ -197,8 +214,8 @@ func showScoreboardAll(store *Store, s *discordgo.Session, guildID string) (stri
 	}
 
 	if builder.Len() == 0 {
-		return "Nenhum jogo válido gravado ainda", nil
+		return textReply("Nenhum jogo válido gravado ainda"), nil
 	}
 
-	return builder.String(), nil
+	return textReply(builder.String()), nil
 }

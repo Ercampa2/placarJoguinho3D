@@ -9,6 +9,10 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+// noMentions stops Discord from pinging anyone from text this bot builds,
+// in case a display name ever falls back to a raw mention.
+var noMentions = &discordgo.MessageAllowedMentions{}
+
 func main() {
 	token := os.Getenv("DISCORD_TOKEN")
 	if token == "" {
@@ -23,6 +27,15 @@ func main() {
 	}
 
 	store := NewStore("scores.json")
+
+	matchups, games, err := store.Migrate()
+	if err != nil {
+		log.Fatalf("migrate score %v", err)
+	}
+
+	if matchups > 0 {
+		log.Printf("Migrados %d jogos legacy para %d jogos novos", matchups, games)
+	}
 
 	session.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
 		log.Printf("logged in as %s", r.User.String())
@@ -47,19 +60,26 @@ func main() {
 			}
 		}
 
-		response, err := handleCommand(s, i, store)
+		resp, err := handleCommand(s, i, store)
 		if err != nil {
 			log.Printf("handle /%s: %v", commandName, err)
-			response = "Desculpe, não pude tratar este comando."
+			resp = textReply("Desculpe, não pude tratar este comando.")
 		}
 
-		if response == "" {
-			response = "Feito."
+		if resp.content == "" && resp.embed == nil {
+			resp = textReply("Feito.")
+		}
+
+		var embeds []*discordgo.MessageEmbed
+		if resp.embed != nil {
+			embeds = []*discordgo.MessageEmbed{resp.embed}
 		}
 
 		if slowMode {
 			_, err = s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-				Content: &response,
+				Content:         &resp.content,
+				Embeds:          &embeds,
+				AllowedMentions: noMentions,
 			})
 
 			if err != nil {
@@ -69,7 +89,9 @@ func main() {
 			err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
 				Data: &discordgo.InteractionResponseData{
-					Content: response,
+					Content:         resp.content,
+					Embeds:          embeds,
+					AllowedMentions: noMentions,
 				},
 			})
 

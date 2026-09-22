@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"sort"
@@ -58,7 +59,6 @@ type matchupScore struct {
 	Players map[string]int `json:"players"`
 }
 
-var errNoWins = errors.New("no wins to undo")
 var errNoMatchupPlayers = errors.New("no matchup for players")
 var errNoMatchup = errors.New("no matchup")
 
@@ -216,6 +216,105 @@ func (st *Store) AllMatchups() (map[string]matchupScore, error) {
 	}
 
 	return all, nil
+}
+
+func (st *Store) Migrate() (matchupsFound, gamesAdded int, err error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	current, err := st.load()
+	if err != nil {
+		return 0, 0, err
+	}
+
+	if len(current.Matchups) == 0 {
+		return 0, 0, nil
+	}
+
+	if err := st.backupLegacy(); err != nil {
+		return 0, 0, err
+	}
+
+	migrated, err := migrateLegacy(current)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	if err := st.save(migrated); err != nil {
+		return 0, 0, err
+	}
+
+	return len(current.Matchups), len(migrated.Games) - len(current.Games), nil
+}
+
+func (st *Store) backupLegacy() error {
+	backupPath := st.path + ".legacy.bak"
+
+	if _, err := os.Stat(backupPath); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	data, err := os.ReadFile(st.path)
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(backupPath, data, 0644)
+}
+
+func migrateLegacy(s scores) (scores, error) {
+	if len(s.Matchups) == 0 {
+		return s, nil
+	}
+
+	keys := make([]string, 0, len(s.Matchups))
+	for key := range s.Matchups {
+		keys = append(keys, key)
+	}
+
+	sort.Strings(keys)
+
+	var migrated []game
+	for _, key := range keys {
+		ids := strings.Split(key, "|")
+		players := s.Matchups[key].Players
+		if len(ids) != 2 || ids[0] == ids[1] || len(players) == 0 {
+			continue
+		}
+
+		for i, winner := range ids {
+			loser := ids[1-i]
+			for n := players[winner]; n > 0; n-- {
+				migrated = append(migrated, game{Winner: winner, Loser: loser})
+			}
+		}
+	}
+
+	out := scores{Games: append(migrated, s.Games...)}
+
+	oldScore := scores{Games: s.Games}.allMatchups()
+	newScore := out.allMatchups()
+
+	for _, key := range keys {
+		ids := strings.Split(key, "|")
+		players := s.Matchups[key].Players
+
+		if len(ids) != 2 || ids[0] == ids[1] || len(players) == 0 {
+			continue
+		}
+
+		for id, wantWins := range players {
+			got := newScore[key].Players[id] - oldScore[key].Players[id]
+			if got != wantWins {
+				return scores{}, fmt.Errorf("Erro de migração da key %v usuario %v, legacy era: %v, novo ficou %v", key, id, wantWins, got)
+			}
+		}
+
+	}
+
+	return out, nil
 }
 
 func NewStore(path string) *Store {
