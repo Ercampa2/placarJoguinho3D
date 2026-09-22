@@ -3,9 +3,10 @@ package main
 import (
 	"errors"
 	"fmt"
-	"github.com/bwmarrin/discordgo"
 	"sort"
 	"strings"
+
+	"github.com/bwmarrin/discordgo"
 )
 
 var commands = []*discordgo.ApplicationCommand{
@@ -33,14 +34,14 @@ var commands = []*discordgo.ApplicationCommand{
 		Options: []*discordgo.ApplicationCommandOption{
 			{
 				Type:        discordgo.ApplicationCommandOptionUser,
-				Name:        "vencedor",
-				Description: "Jogador vencedor",
+				Name:        "jogador1",
+				Description: "Primeiro jogador",
 				Required:    true,
 			},
 			{
 				Type:        discordgo.ApplicationCommandOptionUser,
-				Name:        "perdedor",
-				Description: "Jogador perdedor",
+				Name:        "jogador2",
+				Description: "Segundo jogador",
 				Required:    true,
 			},
 		},
@@ -111,25 +112,30 @@ func recordGame(store *Store, data discordgo.ApplicationCommandInteractionData) 
 }
 
 func undoGame(store *Store, data discordgo.ApplicationCommandInteractionData) (string, error) {
-	winner, loser := winnerLoserOptions(data)
+	player1, player2 := gameOptions(data)
 
-	if winner.ID == "" || loser.ID == "" {
-		return "Envie um vencedor e um perdedor", nil
+	if player1.ID == "" || player2.ID == "" {
+		return "Envie 2 jogadores", nil
 	}
 
-	if winner.ID == loser.ID {
+	if player1.ID == player2.ID {
 		return "Os jogadores devem ser pessoas diferentes", nil
 	}
 
-	matchup, err := store.UndoWin(winner.ID, loser.ID)
+	removed, matchup, err := store.UndoLast(player1.ID, player2.ID)
 	if err != nil {
 		if errors.Is(err, errNoWins) {
-			return fmt.Sprintf("%s não possui nenhuma vitória para ser desfeita", winner.DisplayName), nil
+			return fmt.Sprintf("Nenhuma partida gravada entre %v e %v", player1.DisplayName, player2.DisplayName), nil
 		}
 		return "", err
 	}
 
-	return formatScoreboard(winner, loser, matchup, fmt.Sprintf("Removida uma vitória de %s.", winner.DisplayName)), nil
+	winnerName, loserName := player1.DisplayName, player2.DisplayName
+	if removed.Winner == player2.ID {
+		winnerName, loserName = loserName, winnerName
+	}
+
+	return formatScoreboard(player1, player2, matchup, fmt.Sprintf("Removida vitória de %v sobre %v.", winnerName, loserName)), nil
 }
 
 func showScoreboard(store *Store, data discordgo.ApplicationCommandInteractionData) (string, error) {

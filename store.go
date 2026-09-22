@@ -4,13 +4,54 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
+
+type game struct {
+	Winner string    `json:"winner"`
+	Loser  string    `json:"loser"`
+	At     time.Time `json:"at,omitzero"`
+}
 
 type scores struct {
 	Matchups map[string]matchupScore `json:"matchups"`
+	Games    []game                  `json:"games"`
+}
+
+func (s scores) matchupFor(a, b string) (matchupScore, bool) {
+	m := matchupScore{Players: map[string]int{a: 0, b: 0}}
+	played := false
+	want := matchupKey(a, b)
+	for _, g := range s.Games {
+		if matchupKey(g.Winner, g.Loser) == want {
+			m.Players[g.Winner]++
+			played = true
+		}
+	}
+
+	return m, played
+}
+
+func (s scores) allMatchups() map[string]matchupScore {
+	result := make(map[string]matchupScore)
+
+	for _, g := range s.Games {
+		key := matchupKey(g.Winner, g.Loser)
+
+		m, exists := result[key]
+		if !exists {
+			m = matchupScore{Players: map[string]int{g.Winner: 0, g.Loser: 0}}
+		}
+
+		m.Players[g.Winner]++
+		result[key] = m
+	}
+
+	return result
 }
 
 type matchupScore struct {
@@ -99,46 +140,46 @@ func (st *Store) RecordWin(winnerID, loserID string) (matchupScore, error) {
 		return matchupScore{}, err
 	}
 
-	key := matchupKey(winnerID, loserID)
-	matchup := current.Matchups[key]
-	if matchup.Players == nil {
-		matchup.Players = map[string]int{winnerID: 0, loserID: 0}
-	}
-
-	matchup.Players[winnerID]++
-	current.Matchups[key] = matchup
+	current.Games = append(current.Games, game{
+		Winner: winnerID,
+		Loser:  loserID,
+		At:     time.Now().UTC(),
+	})
 
 	if err := st.save(current); err != nil {
 		return matchupScore{}, err
 	}
 
+	matchup, _ := current.matchupFor(winnerID, loserID)
 	return matchup, nil
 }
 
-func (st *Store) UndoWin(winnerID, loserID string) (matchupScore, error) {
+func (st *Store) UndoLast(aID, bID string) (game, matchupScore, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
 	current, err := st.load()
 	if err != nil {
-		return matchupScore{}, err
+		return game{}, matchupScore{}, err
 	}
 
-	key := matchupKey(winnerID, loserID)
-	matchup := current.Matchups[key]
+	want := matchupKey(aID, bID)
+	for i := len(current.Games) - 1; i >= 0; i-- {
+		g := current.Games[i]
+		if matchupKey(g.Winner, g.Loser) != want {
+			continue
+		}
 
-	if matchup.Players[winnerID] < 1 {
-		return matchupScore{}, errNoWins
+		current.Games = slices.Delete(current.Games, i, i+1)
+		if err := st.save(current); err != nil {
+			return game{}, matchupScore{}, err
+		}
+
+		matchup, _ := current.matchupFor(aID, bID)
+		return g, matchup, nil
 	}
 
-	matchup.Players[winnerID]--
-	current.Matchups[key] = matchup
-
-	if err := st.save(current); err != nil {
-		return matchupScore{}, err
-	}
-
-	return matchup, nil
+	return game{}, matchupScore{}, errNoMatchupPlayers
 }
 
 func (st *Store) Matchup(a, b string) (matchupScore, error) {
@@ -150,14 +191,12 @@ func (st *Store) Matchup(a, b string) (matchupScore, error) {
 		return matchupScore{}, err
 	}
 
-	key := matchupKey(a, b)
-
-	matchup := current.Matchups[key]
-	if matchup.Players == nil {
+	m, played := current.matchupFor(a, b)
+	if !played {
 		return matchupScore{}, errNoMatchupPlayers
 	}
 
-	return matchup, nil
+	return m, nil
 }
 
 func (st *Store) AllMatchups() (map[string]matchupScore, error) {
@@ -171,11 +210,12 @@ func (st *Store) AllMatchups() (map[string]matchupScore, error) {
 		return result, err
 	}
 
-	if len(current.Matchups) == 0 {
+	all := current.allMatchups()
+	if len(all) == 0 {
 		return result, errNoMatchup
 	}
 
-	return current.Matchups, nil
+	return all, nil
 }
 
 func NewStore(path string) *Store {

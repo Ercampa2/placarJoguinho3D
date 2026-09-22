@@ -125,7 +125,7 @@ func TestUndoWinTable(t *testing.T) {
 				}
 			}
 
-			matchup, err := store.UndoWin("a", "b")
+			_, matchup, err := store.UndoLast("a", "b")
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("Undo win error: %v, want %v", err, tc.wantErr)
 			}
@@ -133,6 +133,7 @@ func TestUndoWinTable(t *testing.T) {
 			if tc.wantErr == nil && matchup.Players["a"] != tc.wantWins {
 				t.Errorf("a want %v wins, got %v", tc.wantWins, matchup.Players["a"])
 			}
+
 		})
 	}
 
