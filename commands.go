@@ -124,7 +124,7 @@ func recordGame(store *Store, data discordgo.ApplicationCommandInteractionData) 
 	}
 
 	description := fmt.Sprintf("Vitória gravada para %s.", winner.DisplayName)
-	return embedReply(formatScoreboardEmbed(winner, loser, matchup, description, colorRecorded)), nil
+	return embedReply(formatScoreboardEmbed(winner, loser, matchup, description, colorRecorded, winner)), nil
 }
 
 func undoGame(store *Store, data discordgo.ApplicationCommandInteractionData) (reply, error) {
@@ -152,7 +152,7 @@ func undoGame(store *Store, data discordgo.ApplicationCommandInteractionData) (r
 	}
 
 	description := fmt.Sprintf("Removida vitória de %v sobre %v.", winnerName, loserName)
-	return embedReply(formatScoreboardEmbed(player1, player2, matchup, description, colorUndone)), nil
+	return embedReply(formatScoreboardEmbed(player1, player2, matchup, description, colorUndone, playerOption{})), nil
 }
 
 func showScoreboard(store *Store, data discordgo.ApplicationCommandInteractionData) (reply, error) {
@@ -171,7 +171,7 @@ func showScoreboard(store *Store, data discordgo.ApplicationCommandInteractionDa
 		return reply{}, err
 	}
 
-	return embedReply(formatScoreboardEmbed(player1, player2, matchup, "", colorNeutral)), nil
+	return embedReply(formatScoreboardEmbed(player1, player2, matchup, "", colorNeutral, playerOption{})), nil
 }
 
 func showScoreboardAll(store *Store, s *discordgo.Session, guildID string) (reply, error) {

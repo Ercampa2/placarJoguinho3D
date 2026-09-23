@@ -17,9 +17,15 @@ const (
 
 // formatScoreboardEmbed builds a rich scoreboard for a single matchup.
 // description is shown under the title (e.g. "Vitória gravada para X."), and
-// may be empty. Whoever is currently ahead gets a 🏆 next to their name and
-// their avatar as the thumbnail; a tied matchup gets neither.
-func formatScoreboardEmbed(player1, player2 playerOption, matchup matchupScore, description string, color int) *discordgo.MessageEmbed {
+// may be empty. Whoever currently has more wins gets a 🏆 next to their name
+// in the fields; a tied matchup gets neither.
+//
+// highlight picks whose avatar is shown as the thumbnail. Pass the zero
+// playerOption{} to fall back to showing whoever is currently ahead overall
+// (e.g. for a plain /placar lookup); pass a specific player (e.g. the winner
+// of the game that was just recorded) to feature them instead, regardless of
+// the overall standings.
+func formatScoreboardEmbed(player1, player2 playerOption, matchup matchupScore, description string, color int, highlight playerOption) *discordgo.MessageEmbed {
 	player1Wins := matchup.Players[player1.ID]
 	player2Wins := matchup.Players[player2.ID]
 
@@ -36,8 +42,11 @@ func formatScoreboardEmbed(player1, player2 playerOption, matchup matchupScore, 
 		},
 	}
 
-	if leader, ok := leadingPlayer(player1, player1Wins, player2, player2Wins); ok && leader.AvatarURL != "" {
-		embed.Thumbnail = &discordgo.MessageEmbedThumbnail{URL: leader.AvatarURL}
+	if highlight.ID == "" {
+		highlight, _ = leadingPlayer(player1, player1Wins, player2, player2Wins)
+	}
+	if highlight.AvatarURL != "" {
+		embed.Thumbnail = &discordgo.MessageEmbedThumbnail{URL: highlight.AvatarURL}
 	}
 
 	return embed
