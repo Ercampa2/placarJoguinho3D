@@ -246,6 +246,26 @@ go run .   # or however you normally start the bot; watch the migration log line
 
 If you deploy by copying files instead of using git, just make sure you never copy a `scores.json` over the real one.
 
+### Turning on the water reminders
+
+The water reminders stay off until their variables are set, so the update above changes nothing else on its own. To turn them on at that machine:
+
+1. **Channels.** Pick one channel per track. If `GUILD_ID` is set on that machine, the channels must be in that server, since the commands are only registered there. Copy each channel's ID (Developer Mode on, right-click the channel, Copy Channel ID).
+2. **Permissions.** Give the bot **View Channel**, **Send Messages** and **Embed Links** in those channels. In a private channel, first add the bot to the channel's permissions.
+3. **Variables.** Wherever `DISCORD_TOKEN` is set, also set `AGUA_CANAL_5MIN` and/or `AGUA_CANAL_10MIN`, with no `_` between the number and `MIN`. Optionally set `AGUA_URL`, like `http://192.168.0.10:8080`, so `/agua_token` shows the address to the players.
+4. **Network.** Allow TCP port 8080 through the firewall, and give the machine a fixed LAN address, like a DHCP reservation in the router. That address is the `BOT_URL` in the players' scripts.
+5. **Start the bot and read the log.** Besides the migration line, it should show:
+
+   ```text
+   registered /agua_token command in guild <GUILD_ID>
+   registered /ranking_agua command in guild <GUILD_ID>
+   water reminders: track 5min in #<channel>, every 5m0s
+   water sips: listening on :8080
+   ```
+
+   Without `GUILD_ID`, the first two lines say `registered global` instead. A line with `unknown variable AGUA_...` means a misspelled name, `water reminders off` means no channel variable was found, and `cannot use channel` means a wrong ID or a missing permission.
+6. **Check from a player's computer.** Run `/agua_token` in Discord, set up a sip script (see "Sip scripts") and press the key. Outside the reminder hours the answer is `Nenhuma rodada aberta agora`, which still proves the script reaches the bot; `Sem resposta do bot` means it does not, so check the address, the port and the firewall.
+
 ## Development
 
 Format the code:
