@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 
 	"github.com/bwmarrin/discordgo"
@@ -37,6 +39,15 @@ func main() {
 		log.Printf("Migrados %d jogos legacy para %d jogos novos", matchups, games)
 	}
 
+	water, err := newWaterFromEnv()
+	if err != nil {
+		log.Fatalf("configure water reminders: %v", err)
+	}
+
+	// ctx is cancelled on Ctrl+C or SIGTERM, which stops the water goroutines.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	session.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
 		log.Printf("logged in as %s", r.User.String())
 	})
@@ -60,7 +71,7 @@ func main() {
 			}
 		}
 
-		resp, err := handleCommand(s, i, store)
+		resp, err := handleCommand(s, i, store, water)
 		if err != nil {
 			log.Printf("handle /%s: %v", commandName, err)
 			resp = textReply("Desculpe, não pude tratar este comando.")
@@ -86,13 +97,18 @@ func main() {
 				log.Printf("edit response to /%s: %v", commandName, err)
 			}
 		} else {
+			data := &discordgo.InteractionResponseData{
+				Content:         resp.content,
+				Embeds:          embeds,
+				AllowedMentions: noMentions,
+			}
+			if resp.ephemeral {
+				data.Flags = discordgo.MessageFlagsEphemeral
+			}
+
 			err = s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 				Type: discordgo.InteractionResponseChannelMessageWithSource,
-				Data: &discordgo.InteractionResponseData{
-					Content:         resp.content,
-					Embeds:          embeds,
-					AllowedMentions: noMentions,
-				},
+				Data: data,
 			})
 
 			if err != nil {
@@ -106,9 +122,14 @@ func main() {
 	}
 	defer session.Close()
 
+	allCommands := commands
+	if water != nil {
+		allCommands = slices.Concat(commands, water.commands())
+	}
+
 	// Bulk overwrite replaces the whole command list, so commands removed from
 	// the code (like the old team and bulk ones) also disappear from Discord.
-	registered, err := session.ApplicationCommandBulkOverwrite(session.State.User.ID, guildID, commands)
+	registered, err := session.ApplicationCommandBulkOverwrite(session.State.User.ID, guildID, allCommands)
 	if err != nil {
 		log.Fatalf("register commands: %v", err)
 	}
@@ -121,11 +142,17 @@ func main() {
 		}
 	}
 
+	if water != nil {
+		shutdownWater, err := water.start(ctx, session)
+		if err != nil {
+			log.Fatalf("start water reminders: %v", err)
+		}
+		defer shutdownWater()
+	}
+
 	log.Println("bot is running. Press Ctrl+C to stop.")
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-	<-stop
+	<-ctx.Done()
 
 	log.Println("shutting down")
 }

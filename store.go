@@ -107,7 +107,14 @@ func (st *Store) save(currentScores scores) error {
 		return err
 	}
 
-	tmp := st.path + ".tmp"
+	return writeFileAtomic(st.path, data)
+}
+
+// writeFileAtomic writes data to path.tmp, flushes it to disk and renames it
+// over path, so path always holds either the old content or the new one,
+// never a partial write. Both Store and WaterStore save through it.
+func writeFileAtomic(path string, data []byte) error {
+	tmp := path + ".tmp"
 
 	f, err := os.Create(tmp)
 	if err != nil {
@@ -128,7 +135,7 @@ func (st *Store) save(currentScores scores) error {
 		return err
 	}
 
-	return os.Rename(tmp, st.path)
+	return os.Rename(tmp, path)
 }
 
 func (st *Store) RecordWin(winnerID, loserID string) (matchupScore, error) {

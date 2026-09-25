@@ -71,10 +71,13 @@ var commands = []*discordgo.ApplicationCommand{
 }
 
 // reply is what a command handler produces. main.go turns it into the
-// actual Discord response: content, an embed, or both.
+// actual Discord response: content, an embed, or both. An ephemeral reply is
+// only shown to whoever ran the command; it is not supported for the deferred
+// commands (todos_placares).
 type reply struct {
-	content string
-	embed   *discordgo.MessageEmbed
+	content   string
+	embed     *discordgo.MessageEmbed
+	ephemeral bool
 }
 
 func textReply(content string) reply {
@@ -85,7 +88,9 @@ func embedReply(embed *discordgo.MessageEmbed) reply {
 	return reply{embed: embed}
 }
 
-func handleCommand(s *discordgo.Session, i *discordgo.InteractionCreate, store *Store) (reply, error) {
+// handleCommand runs a slash command. water is nil when the water reminders
+// are off.
+func handleCommand(s *discordgo.Session, i *discordgo.InteractionCreate, store *Store, water *waterFeature) (reply, error) {
 	if i.GuildID == "" {
 		return textReply("Please use this command in a Discord server."), nil
 	}
@@ -102,6 +107,11 @@ func handleCommand(s *discordgo.Session, i *discordgo.InteractionCreate, store *
 		return showScoreboardAll(store, s, i.GuildID)
 	case "desfazer_jogo":
 		return undoGame(store, data)
+	case "agua_token", "ranking_agua":
+		if water == nil {
+			return textReply("O lembrete de água não está ativado neste bot."), nil
+		}
+		return water.handleCommand(i, data)
 	default:
 		return textReply(fmt.Sprintf("Unknown command: /%s.", commandName)), nil
 	}
