@@ -19,9 +19,35 @@ func monday(loc *time.Location, hour, minute, second int) time.Time {
 	return time.Date(2026, 9, 21, hour, minute, second, 0, loc)
 }
 
-func TestRoundAt(t *testing.T) {
+func TestScoringIsOpen(t *testing.T) {
 	loc := saoPaulo(t)
-	sched := workSchedule(loc)
+	scoring := scoringSchedule(loc)
+
+	tests := []struct {
+		name string
+		now  time.Time
+		want bool
+	}{
+		{"before 9", monday(loc, 8, 59, 59), false},
+		{"9 sharp", monday(loc, 9, 0, 0), true},
+		{"lunch", monday(loc, 12, 45, 0), true},
+		{"last second", monday(loc, 15, 59, 59), true},
+		{"16 sharp", monday(loc, 16, 0, 0), false},
+		{"saturday", time.Date(2026, 9, 26, 10, 0, 0, 0, loc), false},
+		{"sunday", time.Date(2026, 9, 27, 10, 0, 0, 0, loc), false},
+		{"time given in UTC", time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC), true}, // 09:00 in São Paulo
+	}
+
+	for _, tt := range tests {
+		if got := scoring.isOpen(tt.now); got != tt.want {
+			t.Errorf("%s: isOpen(%v) = %v, want %v", tt.name, tt.now, got, tt.want)
+		}
+	}
+}
+
+func TestReminderRoundAt(t *testing.T) {
+	loc := saoPaulo(t)
+	reminders := reminderSchedule(loc)
 	at := func(hour, minute, second int) time.Time { return monday(loc, hour, minute, second) }
 	var closed time.Time
 
@@ -30,18 +56,11 @@ func TestRoundAt(t *testing.T) {
 		now           time.Time
 		want5, want10 time.Time
 	}{
-		{"before 9", at(8, 59, 59), closed, closed},
-		{"9 sharp", at(9, 0, 0), at(9, 0, 0), at(9, 0, 0)},
-		{"inside a round", at(9, 7, 30), at(9, 5, 0), at(9, 0, 0)},
-		{"last round before lunch", at(12, 29, 59), at(12, 25, 0), at(12, 20, 0)},
-		{"lunch starts", at(12, 30, 0), closed, closed},
-		{"lunch ends", at(13, 29, 59), closed, closed},
-		{"after lunch", at(13, 30, 0), at(13, 30, 0), at(13, 30, 0)},
-		{"last round of the day", at(15, 59, 59), at(15, 55, 0), at(15, 50, 0)},
-		{"day over", at(16, 0, 0), closed, closed},
+		{"midnight", at(0, 0, 0), at(0, 0, 0), at(0, 0, 0)},
+		{"early morning", at(6, 7, 30), at(6, 5, 0), at(6, 0, 0)},
+		{"lunch", at(12, 47, 0), at(12, 45, 0), at(12, 40, 0)},
+		{"evening", at(23, 59, 59), at(23, 55, 0), at(23, 50, 0)},
 		{"saturday", time.Date(2026, 9, 26, 10, 0, 0, 0, loc), closed, closed},
-		{"sunday", time.Date(2026, 9, 27, 10, 0, 0, 0, loc), closed, closed},
-		{"time given in UTC", time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC), at(9, 0, 0), at(9, 0, 0)},
 	}
 
 	for _, tt := range tests {
@@ -53,7 +72,7 @@ func TestRoundAt(t *testing.T) {
 				{5 * time.Minute, tt.want5},
 				{10 * time.Minute, tt.want10},
 			} {
-				got, open := sched.roundAt(tt.now, c.interval)
+				got, open := reminders.roundAt(tt.now, c.interval)
 				if open != !c.want.IsZero() || (open && !got.Equal(c.want)) {
 					t.Errorf("roundAt(%v, %v) = %v, %v; want %v", tt.now, c.interval, got, open, c.want)
 				}
@@ -64,7 +83,7 @@ func TestRoundAt(t *testing.T) {
 
 func TestDayOver(t *testing.T) {
 	loc := saoPaulo(t)
-	sched := workSchedule(loc)
+	scoring := scoringSchedule(loc)
 
 	tests := []struct {
 		now  time.Time
@@ -74,25 +93,13 @@ func TestDayOver(t *testing.T) {
 		{monday(loc, 15, 59, 59), false},
 		{monday(loc, 16, 0, 0), true},
 		{monday(loc, 23, 59, 59), true},
-		{time.Date(2026, 9, 26, 17, 0, 0, 0, loc), false}, // Saturday: no reminder day
+		{time.Date(2026, 9, 26, 17, 0, 0, 0, loc), false}, // Saturday: no scoring day
 	}
 
 	for _, tt := range tests {
-		if got := sched.dayOver(tt.now); got != tt.want {
+		if got := scoring.dayOver(tt.now); got != tt.want {
 			t.Errorf("dayOver(%v) = %v, want %v", tt.now, got, tt.want)
 		}
-	}
-}
-
-func TestRoundsPerDay(t *testing.T) {
-	loc := saoPaulo(t)
-	sched := workSchedule(loc)
-
-	if got := sched.roundsPerDay(5 * time.Minute); got != 72 {
-		t.Errorf("roundsPerDay(5m) = %d, want 72", got)
-	}
-	if got := sched.roundsPerDay(10 * time.Minute); got != 36 {
-		t.Errorf("roundsPerDay(10m) = %d, want 36", got)
 	}
 }
 
@@ -103,29 +110,23 @@ func TestTestSchedule(t *testing.T) {
 	}
 	sched := testSchedule(loc, saturday(21, 15, 20))
 
-	if _, open := sched.roundAt(saturday(21, 15, 59), time.Minute); open {
-		t.Error("round open before the test window")
+	if sched.isOpen(saturday(21, 15, 59)) {
+		t.Error("open before the test window")
 	}
-	if got, open := sched.roundAt(saturday(21, 16, 0), time.Minute); !open || !got.Equal(saturday(21, 16, 0)) {
-		t.Errorf("first round = %v, %v; want 21:16", got, open)
+	if !sched.isOpen(saturday(21, 16, 0)) || !sched.isOpen(saturday(21, 25, 59)) {
+		t.Error("closed inside the test window")
 	}
-	if got, open := sched.roundAt(saturday(21, 25, 59), 2*time.Minute); !open || !got.Equal(saturday(21, 24, 0)) {
-		t.Errorf("last 2-minute round = %v, %v; want 21:24", got, open)
-	}
-	if !sched.dayOver(saturday(21, 26, 0)) {
+	if sched.isOpen(saturday(21, 26, 0)) || !sched.dayOver(saturday(21, 26, 0)) {
 		t.Error("test day not over at 21:26")
-	}
-	if got := sched.roundsPerDay(time.Minute); got != 10 {
-		t.Errorf("roundsPerDay(1m) = %d, want 10", got)
 	}
 }
 
 func TestDay(t *testing.T) {
 	loc := saoPaulo(t)
-	sched := workSchedule(loc)
+	scoring := scoringSchedule(loc)
 
 	// 01:30 UTC is still the previous evening in São Paulo.
-	if got := sched.day(time.Date(2026, 9, 22, 1, 30, 0, 0, time.UTC)); got != "2026-09-21" {
+	if got := scoring.day(time.Date(2026, 9, 22, 1, 30, 0, 0, time.UTC)); got != "2026-09-21" {
 		t.Errorf("day = %q, want 2026-09-21", got)
 	}
 }

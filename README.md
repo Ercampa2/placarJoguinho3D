@@ -82,20 +82,18 @@ On every startup the bot overwrites the full command list in Discord, so any com
 
 An optional drink-water game, on when at least one `AGUA_CANAL_*` variable is set. The bot then:
 
-- posts "💧 Beba água!" in a channel on a schedule: Monday to Friday, 09:00–12:30 and 13:30–16:00, São Paulo time. There are two independent **tracks**: `5min` posts every 5 minutes in one channel, and `10min` posts every 10 minutes in another. Each has its own scores.
+- posts "💧 Beba água!" in a channel all day long, Monday to Friday, São Paulo time. There are two independent **tracks**: `5min` posts every 5 minutes (00:00, 00:05...) in one channel, and `10min` posts every 10 minutes in another. Each has its own scores.
 - listens on the local network for "I drank" requests, sent by a small script that each player binds to a keyboard shortcut (see "Sip scripts"), so nobody has to switch to Discord.
 - posts each track's ranking for the day in its channel at 16:00, and answers `/ranking_agua` for any day.
 
 ### Rules
 
-- Each reminder opens a **round** that lasts until the next reminder time. The rounds are cut at lunch and at the end of the day: the 12:25 round closes at 12:30, not after lunch. The 5-minute track has 72 rounds a day and the 10-minute track has 36.
-- A sip counts for the round that is open when the request reaches the bot. The bot's clock decides, and requests do not name a round, so there is no way to answer an older reminder. A request outside the rounds is refused.
-- Each player counts at most one sip per round and track.
-- After a restart, the bot does not post the reminder of the round in progress again (nor the ranking, after 16:00); it posts at the next round. Sips keep working meanwhile, since rounds come from the clock.
+- Sips **score from 09:00 to 16:00, Monday to Friday**, lunch included, going by the bot's clock. Each sip is worth one point, with no limit and no link to a particular reminder: the reminders only remind. A sip outside those hours is refused.
+- After a restart, the bot does not post the reminder in progress again (nor the ranking, after 16:00); it posts at the next reminder time.
 - Scores are per track and per day; the next day starts from zero. Every sip is kept in `agua.json`, so past days can still be shown.
 - Nothing can tell whether someone really drank: the game runs on trust. The token only stops people from recording sips for someone else.
 
-`schedule.roundAt` (in `water_schedule.go`) is the single place that turns a time into a round; the reminder loop and the HTTP endpoint both use it.
+`water_schedule.go` defines both schedules: `reminderSchedule` (when to post) and `scoringSchedule` (when sips count, and when the day's ranking is due).
 
 ### Configuration
 
@@ -105,7 +103,7 @@ An optional drink-water game, on when at least one `AGUA_CANAL_*` variable is se
 | `AGUA_CANAL_10MIN` | No | Channel ID for the 10-minute track. Unset: that track is off. |
 | `AGUA_HTTP_ADDR` | No | Address the sip endpoint listens on. Default `:8080`, which accepts connections from other machines; `localhost:8080` would not. |
 | `AGUA_URL` | No | How players reach the bot, like `http://192.168.0.10:8080`. Only used to show it in `/agua_token` replies. |
-| `AGUA_TESTE` | No | `1` replaces the schedule with a 10-minute test run, starting on the next full minute and on any day, with 1- and 2-minute rounds and the ranking at the end. |
+| `AGUA_TESTE` | No | `1` makes a 10-minute test run, on any day: sips score from the next full minute for ten minutes, then the ranking is posted. Reminders come every 1 and 2 minutes. |
 
 Channel IDs are copied from Discord with Developer Mode on (right-click the channel, Copy Channel ID).
 
@@ -138,8 +136,8 @@ Authorization: Bearer <token from /agua_token>
 
 | Status | When |
 | --- | --- |
-| 201 | Sip recorded. The text says the round and how many sips the player has on that track today. |
-| 409 | Already recorded in this round, or no round is open right now. |
+| 201 | Sip recorded. The text says how many sips the player has on that track today. |
+| 409 | Outside scoring hours. |
 | 401 | Missing or unknown token. |
 | 404 | Unknown track, or one that is off. |
 | 405 | Anything but `POST`. |
@@ -193,12 +191,12 @@ The water reminders keep their own file, `agua.json`, written the same way and a
   "tokens": { "111111111111111111": "B6VPR5RD6HLJR7KMSXGQC6Q7YI" },
   "sips": [
     { "player": "111111111111111111", "track": "5min", "day": "2026-09-24",
-      "round": "2026-09-24T13:05:00Z", "at": "2026-09-24T13:05:42Z" }
+      "at": "2026-09-24T13:05:42Z" }
   ]
 }
 ```
 
-`round` is the start of the round and identifies the reminder; `day` is its date in São Paulo, which rankings group by.
+`day` is the sip's date in São Paulo, which rankings group by. Sips recorded by earlier versions also have a `round` field, which is now ignored.
 
 ### Migrating from the old format
 
@@ -264,7 +262,7 @@ The water reminders stay off until their variables are set, so the update above 
    ```
 
    Without `GUILD_ID`, the first two lines say `registered global` instead. A line with `unknown variable AGUA_...` means a misspelled name, `water reminders off` means no channel variable was found, and `cannot use channel` means a wrong ID or a missing permission.
-6. **Check from a player's computer.** Run `/agua_token` in Discord, set up a sip script (see "Sip scripts") and press the key. Outside the reminder hours the answer is `Nenhuma rodada aberta agora`, which still proves the script reaches the bot; `Sem resposta do bot` means it does not, so check the address, the port and the firewall.
+6. **Check from a player's computer.** Run `/agua_token` in Discord, set up a sip script (see "Sip scripts") and press the key. Outside scoring hours the answer is `Fora do horário de pontuação`, which still proves the script reaches the bot; `Sem resposta do bot` means it does not, so check the address, the port and the firewall.
 
 ## Development
 
@@ -300,7 +298,7 @@ go test -race ./...
 
 `store_test.go` covers `Store` (recording, undoing, looking up matchups, persistence, and migration from the old format) and `matchupKey`. Each test uses a temporary directory, so they never touch your real `scores.json`. The Discord command handlers in `commands.go` are not covered by tests.
 
-The `water_*_test.go` files cover the water reminders without Discord or a network: the schedule (`roundAt` against a table of times), `WaterStore`, the HTTP endpoint through `net/http/httptest`, when the reminder loop posts, and the ranking text. They also use temporary directories and never touch `agua.json`.
+The `water_*_test.go` files cover the water reminders without Discord or a network: the schedules (against tables of times), `WaterStore`, the HTTP endpoint through `net/http/httptest`, when the reminder loop posts, and the ranking text. They also use temporary directories and never touch `agua.json`.
 
 ## Project Structure
 
@@ -313,7 +311,7 @@ The `water_*_test.go` files cover the water reminders without Discord or a netwo
 ├── store.go        Store: game history, scoreboards, undo, and legacy migration
 ├── store_test.go   tests for Store, matchupKey, and migrateLegacy
 ├── water.go            water reminders: AGUA_* config, startup, commands, ranking embed
-├── water_schedule.go   reminder hours and roundAt, which maps a time to its round
+├── water_schedule.go   when reminders are posted and when sips score
 ├── water_store.go      WaterStore: sips and tokens in agua.json
 ├── water_http.go       POST /gole/{track}, the sip endpoint
 ├── water_reminder.go   the per-track loop that posts reminders and the daily ranking

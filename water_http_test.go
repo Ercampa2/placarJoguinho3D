@@ -14,8 +14,9 @@ func newTestWater(t *testing.T, now *time.Time) (*waterFeature, string) {
 	t.Helper()
 
 	wf := &waterFeature{
-		store: newTestWaterStore(t),
-		sched: workSchedule(saoPaulo(t)),
+		store:     newTestWaterStore(t),
+		reminders: reminderSchedule(saoPaulo(t)),
+		scoring:   scoringSchedule(saoPaulo(t)),
 		tracks: []waterTrack{
 			{name: "5min", label: "5 min", interval: 5 * time.Minute},
 			{name: "10min", label: "10 min", interval: 10 * time.Minute},
@@ -52,32 +53,32 @@ func checkResponse(t *testing.T, rec *httptest.ResponseRecorder, wantStatus int,
 	}
 }
 
-func TestSipOncePerRound(t *testing.T) {
+func TestSipCountsEverySip(t *testing.T) {
 	loc := saoPaulo(t)
 	now := monday(loc, 10, 7, 0)
 	wf, token := newTestWater(t, &now)
 
-	checkResponse(t, sendSip(wf, http.MethodPost, "5min", token), http.StatusCreated, "rodada das 10:05 (5 min). Hoje: 1.")
-	checkResponse(t, sendSip(wf, http.MethodPost, "5min", token), http.StatusConflict, "já registrou")
+	checkResponse(t, sendSip(wf, http.MethodPost, "5min", token), http.StatusCreated, "Gole registrado (5 min). Hoje: 1.")
+	checkResponse(t, sendSip(wf, http.MethodPost, "5min", token), http.StatusCreated, "Hoje: 2.")
 
-	// The 10-minute track has its own round and score.
-	checkResponse(t, sendSip(wf, http.MethodPost, "10min", token), http.StatusCreated, "rodada das 10:00 (10 min). Hoje: 1.")
+	// The 10-minute track has its own score.
+	checkResponse(t, sendSip(wf, http.MethodPost, "10min", token), http.StatusCreated, "Gole registrado (10 min). Hoje: 1.")
 
-	// The next reminder opens a new round.
-	now = monday(loc, 10, 10, 0)
-	checkResponse(t, sendSip(wf, http.MethodPost, "5min", token), http.StatusCreated, "rodada das 10:10 (5 min). Hoje: 2.")
+	// Lunch counts too.
+	now = monday(loc, 12, 45, 0)
+	checkResponse(t, sendSip(wf, http.MethodPost, "5min", token), http.StatusCreated, "Hoje: 3.")
 }
 
-func TestSipOutsideRounds(t *testing.T) {
+func TestSipOutsideScoringHours(t *testing.T) {
 	loc := saoPaulo(t)
 
 	for _, now := range []time.Time{
-		monday(loc, 12, 45, 0),                   // lunch
-		monday(loc, 16, 0, 0),                    // day over
+		monday(loc, 8, 59, 59),
+		monday(loc, 16, 0, 0),
 		time.Date(2026, 9, 26, 10, 0, 0, 0, loc), // Saturday
 	} {
 		wf, token := newTestWater(t, &now)
-		checkResponse(t, sendSip(wf, http.MethodPost, "5min", token), http.StatusConflict, "Nenhuma rodada aberta")
+		checkResponse(t, sendSip(wf, http.MethodPost, "5min", token), http.StatusConflict, "Fora do horário de pontuação")
 	}
 }
 

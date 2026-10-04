@@ -37,7 +37,7 @@ func TestParseDay(t *testing.T) {
 }
 
 func TestRankingEmbed(t *testing.T) {
-	wf := &waterFeature{sched: workSchedule(saoPaulo(t))}
+	wf := &waterFeature{}
 	track := waterTrack{name: "5min", label: "5 min", interval: 5 * time.Minute}
 
 	embed := wf.rankingEmbed(track, "2026-09-21", []rankEntry{{"a", 5}, {"b", 5}, {"c", 3}, {"d", 1}})
@@ -49,7 +49,7 @@ func TestRankingEmbed(t *testing.T) {
 	if !strings.Contains(embed.Title, "5 min") {
 		t.Errorf("title = %q, want the track label", embed.Title)
 	}
-	if embed.Footer == nil || embed.Footer.Text != "21/09/2026 · 72 lembretes no dia" {
+	if embed.Footer == nil || embed.Footer.Text != "21/09/2026" {
 		t.Errorf("footer = %+v", embed.Footer)
 	}
 

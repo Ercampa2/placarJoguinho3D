@@ -30,12 +30,13 @@ type waterTrack struct {
 // waterFeature is the drink-water game: timed reminders in Discord, the HTTP
 // endpoint that records sips, and the /agua_token and /ranking_agua commands.
 type waterFeature struct {
-	store   *WaterStore
-	sched   schedule
-	tracks  []waterTrack
-	addr    string           // where the sip endpoint listens, like ":8080"
-	baseURL string           // how players reach it; only shown by /agua_token
-	now     func() time.Time // time.Now, replaced in tests
+	store     *WaterStore
+	reminders schedule // when "Beba água" is posted
+	scoring   schedule // when sips count
+	tracks    []waterTrack
+	addr      string           // where the sip endpoint listens, like ":8080"
+	baseURL   string           // how players reach it; only shown by /agua_token
+	now       func() time.Time // time.Now, replaced in tests
 }
 
 // waterEnvVars are the variables newWaterFromEnv reads.
@@ -103,18 +104,20 @@ func newWaterFromEnv() (*waterFeature, error) {
 	}
 
 	wf := &waterFeature{
-		store:   NewWaterStore("agua.json"),
-		sched:   workSchedule(loc),
-		tracks:  tracks,
-		addr:    addr,
-		baseURL: os.Getenv("AGUA_URL"),
-		now:     time.Now,
+		store:     NewWaterStore("agua.json"),
+		reminders: reminderSchedule(loc),
+		scoring:   scoringSchedule(loc),
+		tracks:    tracks,
+		addr:      addr,
+		baseURL:   os.Getenv("AGUA_URL"),
+		now:       time.Now,
 	}
 
 	if testMode {
-		wf.sched = testSchedule(loc, wf.now())
-		w := wf.sched.windows[0]
-		log.Printf("AGUA_TESTE: reminders every day from %02d:%02d to %02d:%02d", w.from/60, w.from%60, w.to/60, w.to%60)
+		wf.reminders.weekends = true
+		wf.scoring = testSchedule(loc, wf.now())
+		w := wf.scoring.windows[0]
+		log.Printf("AGUA_TESTE: reminders all day, every day; sips score from %02d:%02d to %02d:%02d", w.from/60, w.from%60, w.to/60, w.to%60)
 	}
 
 	return wf, nil
@@ -268,9 +271,9 @@ func (wf *waterFeature) showRanking(data discordgo.ApplicationCommandInteraction
 	}
 
 	now := wf.now()
-	day := wf.sched.day(now)
+	day := wf.scoring.day(now)
 	if dateText != "" {
-		parsed, err := parseDay(dateText, now.In(wf.sched.loc))
+		parsed, err := parseDay(dateText, now.In(wf.scoring.loc))
 		if err != nil {
 			return textReply("Data inválida. Use 24/09, 24/09/2026 ou 2026-09-24."), nil
 		}
@@ -318,7 +321,7 @@ func (wf *waterFeature) rankingEmbed(track waterTrack, day string, ranking []ran
 		Title: "🏆 Ranking de água — " + track.label,
 		Color: colorWater,
 		Footer: &discordgo.MessageEmbedFooter{
-			Text: fmt.Sprintf("%s · %d lembretes no dia", date, wf.sched.roundsPerDay(track.interval)),
+			Text: date,
 		},
 	}
 

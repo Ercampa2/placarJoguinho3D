@@ -13,8 +13,8 @@ func newTestWaterStore(t *testing.T) *WaterStore {
 	return NewWaterStore(filepath.Join(t.TempDir(), "agua.json"))
 }
 
-func sipAt(player, track string, round time.Time) sip {
-	return sip{Player: player, Track: track, Day: round.Format(time.DateOnly), Round: round, At: round}
+func sipAt(player, track string, at time.Time) sip {
+	return sip{Player: player, Track: track, Day: at.Format(time.DateOnly), At: at}
 }
 
 func recordSip(t *testing.T, ws *WaterStore, s sip) int {
@@ -26,43 +26,34 @@ func recordSip(t *testing.T, ws *WaterStore, s sip) int {
 	return today
 }
 
-func TestRecordSipOncePerRound(t *testing.T) {
-	ws := newTestWaterStore(t)
-	round1 := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
-	round2 := round1.Add(5 * time.Minute)
+func TestRecordSipCountsEverySip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agua.json")
+	ws := NewWaterStore(path)
+	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 
-	if got := recordSip(t, ws, sipAt("a", "5min", round1)); got != 1 {
+	if got := recordSip(t, ws, sipAt("a", "5min", now)); got != 1 {
 		t.Errorf("first sip today = %d, want 1", got)
 	}
 
-	if _, err := ws.RecordSip(sipAt("a", "5min", round1)); !errors.Is(err, errAlreadySipped) {
-		t.Errorf("second sip in the same round: err = %v, want errAlreadySipped", err)
+	// No limit: a sip a second later counts too.
+	if got := recordSip(t, ws, sipAt("a", "5min", now.Add(time.Second))); got != 2 {
+		t.Errorf("second sip today = %d, want 2", got)
 	}
 
-	if got := recordSip(t, ws, sipAt("a", "5min", round2)); got != 2 {
-		t.Errorf("sip in the next round today = %d, want 2", got)
-	}
-
-	// Other tracks and other players have their own rounds.
-	if got := recordSip(t, ws, sipAt("a", "10min", round1)); got != 1 {
+	// Other tracks, players and days have their own counts.
+	if got := recordSip(t, ws, sipAt("a", "10min", now)); got != 1 {
 		t.Errorf("sip on another track today = %d, want 1", got)
 	}
-	if got := recordSip(t, ws, sipAt("b", "5min", round1)); got != 1 {
+	if got := recordSip(t, ws, sipAt("b", "5min", now)); got != 1 {
 		t.Errorf("another player's sip today = %d, want 1", got)
 	}
-}
+	if got := recordSip(t, ws, sipAt("a", "5min", now.AddDate(0, 0, 1))); got != 1 {
+		t.Errorf("first sip the next day = %d, want 1", got)
+	}
 
-func TestRecordSipDuplicateAfterReload(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "agua.json")
-	loc := saoPaulo(t)
-	round := monday(loc, 10, 5, 0)
-
-	recordSip(t, NewWaterStore(path), sipAt("a", "5min", round))
-
-	// A new store reads the round back from JSON, with a different Location
-	// than monday() builds; the duplicate must still be caught.
-	if _, err := NewWaterStore(path).RecordSip(sipAt("a", "5min", monday(loc, 10, 5, 0))); !errors.Is(err, errAlreadySipped) {
-		t.Errorf("err = %v, want errAlreadySipped", err)
+	// The count survives reading the file again.
+	if got := recordSip(t, NewWaterStore(path), sipAt("a", "5min", now.Add(time.Minute))); got != 3 {
+		t.Errorf("sip after reload = %d, want 3", got)
 	}
 }
 

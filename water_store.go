@@ -11,13 +11,12 @@ import (
 	"time"
 )
 
-// sip is one "I drank water" counted for a round.
+// sip is one "I drank water", worth one point on its track and day.
 type sip struct {
 	Player string    `json:"player"`
 	Track  string    `json:"track"`
-	Day    string    `json:"day"`   // local date of the round, "2006-01-02"
-	Round  time.Time `json:"round"` // start of the round, which identifies the reminder
-	At     time.Time `json:"at"`    // when the request arrived
+	Day    string    `json:"day"` // local date, "2006-01-02"
+	At     time.Time `json:"at"`  // when the request arrived
 }
 
 type waterData struct {
@@ -30,7 +29,6 @@ type rankEntry struct {
 	Sips   int
 }
 
-var errAlreadySipped = errors.New("already sipped in this round")
 var errUnknownToken = errors.New("unknown token")
 
 // WaterStore keeps sips and tokens in a JSON file, the same way Store keeps
@@ -79,9 +77,8 @@ func (ws *WaterStore) save(current waterData) error {
 	return writeFileAtomic(ws.path, data)
 }
 
-// RecordSip saves s, unless its player already has a sip in the same round of
-// the same track (errAlreadySipped). It returns how many sips that player has
-// on that track and day, counting this one.
+// RecordSip saves s. It returns how many sips that player has on that track
+// and day, counting this one.
 func (ws *WaterStore) RecordSip(s sip) (int, error) {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
@@ -93,17 +90,7 @@ func (ws *WaterStore) RecordSip(s sip) (int, error) {
 
 	today := 1
 	for _, old := range current.Sips {
-		if old.Player != s.Player || old.Track != s.Track {
-			continue
-		}
-
-		// Equal, not ==: == also compares the Location, and a time read back
-		// from JSON does not carry the same one as a time just computed.
-		if old.Round.Equal(s.Round) {
-			return 0, errAlreadySipped
-		}
-
-		if old.Day == s.Day {
+		if old.Player == s.Player && old.Track == s.Track && old.Day == s.Day {
 			today++
 		}
 	}

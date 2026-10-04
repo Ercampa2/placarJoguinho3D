@@ -44,35 +44,27 @@ func (wf *waterFeature) handleSip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The bot's clock decides the round, never the client: a sip can only
-	// ever count for the round open right now.
+	// The bot's clock decides whether the sip scores, never the client's.
 	now := wf.now()
-	round, open := wf.sched.roundAt(now, track.interval)
-	if !open {
-		writeText(w, http.StatusConflict, "Nenhuma rodada aberta agora: fora do horário dos lembretes.")
+	if !wf.scoring.isOpen(now) {
+		writeText(w, http.StatusConflict, "Fora do horário de pontuação: o gole não conta agora.")
 		return
 	}
 
-	roundTime := round.Format("15:04")
 	today, err := wf.store.RecordSip(sip{
 		Player: player,
 		Track:  track.name,
-		Day:    wf.sched.day(round),
-		Round:  round.UTC(),
+		Day:    wf.scoring.day(now),
 		At:     now.UTC(),
 	})
-	if errors.Is(err, errAlreadySipped) {
-		writeText(w, http.StatusConflict, fmt.Sprintf("Você já registrou um gole na rodada das %s (%s).", roundTime, track.label))
-		return
-	}
 	if err != nil {
 		log.Printf("water sip: record: %v", err)
 		writeText(w, http.StatusInternalServerError, "Erro no bot ao salvar o gole.")
 		return
 	}
 
-	log.Printf("water sip: %s on %s, round %s", player, track.name, roundTime)
-	writeText(w, http.StatusCreated, fmt.Sprintf("Gole registrado na rodada das %s (%s). Hoje: %d.", roundTime, track.label, today))
+	log.Printf("water sip: %s on %s", player, track.name)
+	writeText(w, http.StatusCreated, fmt.Sprintf("Gole registrado (%s). Hoje: %d.", track.label, today))
 }
 
 func writeText(w http.ResponseWriter, status int, text string) {
